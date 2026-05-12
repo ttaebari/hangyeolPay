@@ -11,6 +11,7 @@ import {
   X
 } from "lucide-react";
 import { ChangeEvent, FormEvent, useMemo, useState } from "react";
+import companyNamesJson from "./data/companyNames.json";
 import hireDatesJson from "./data/hireDates.json";
 import payItemMappingsJson from "./data/payItemMappings.json";
 import {
@@ -24,9 +25,10 @@ import {
 
 const hireDates = hireDatesJson as HireDateMap;
 const payItemMappings = payItemMappingsJson as PayItemMappings;
+const companyNames = companyNamesJson as string[];
 
 function App() {
-  const [companyName, setCompanyName] = useState("주식회사브로넥스");
+  const [companyName, setCompanyName] = useState(companyNames[0] ?? "");
   const [paymentDate, setPaymentDate] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -130,12 +132,16 @@ function App() {
                 <Building2 size={16} aria-hidden="true" />
                 회사명
               </span>
-              <input
-                type="text"
+              <select
                 value={companyName}
                 onChange={(event) => setCompanyName(event.target.value)}
-                placeholder="예: 주식회사브로넥스"
-              />
+              >
+                {companyNames.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
             </label>
 
             <label className="field">
@@ -195,6 +201,10 @@ function App() {
               <div>
                 <dt>입사일 등록</dt>
                 <dd>{Object.keys(hireDates).length}명</dd>
+              </div>
+              <div>
+                <dt>회사명 등록</dt>
+                <dd>{companyNames.length}개</dd>
               </div>
             </dl>
 
