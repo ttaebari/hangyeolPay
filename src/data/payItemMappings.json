@@ -1,0 +1,28 @@
+{
+  "allowances": [
+    { "source": "기본급", "label": "기본급" },
+    { "source": "식대", "label": "식대" },
+    { "source": "연구수당", "label": "연구수당" },
+    { "source": "통신비", "label": "통신비" },
+    { "source": "성과급", "label": "성과급" },
+    { "source": "휴일근로수당", "label": "휴일근로수당" },
+    { "source": "연차수당", "label": "연차수당" },
+    { "source": "귀성여비", "label": "귀성여비" }
+  ],
+  "deductions": [
+    { "source": "국민연금", "label": "국민연금" },
+    { "source": "건강보험", "label": "건강보험" },
+    { "source": "고용보험", "label": "고용보험" },
+    { "source": "장기요양", "label": "장기요양보험" },
+    { "source": "소득세", "label": "소득세" },
+    { "source": "주민세", "label": "주민세" },
+    { "source": "지방소득세", "label": "지방소득세" },
+    { "source": "건강정산", "label": "건강정산" },
+    { "source": "고용정산", "label": "고용정산" },
+    { "source": "장기요양정산", "label": "장기요양정산" },
+    { "source": "학자금공제", "label": "학자금공제" },
+    { "source": "퇴사건강정산", "label": "퇴사건강정산" },
+    { "source": "퇴사장기요양정산", "label": "퇴사장기요양정산" },
+    { "source": "연말정산", "label": "연말정산" }
+  ]
+}
