@@ -1,7 +1,13 @@
 import ExcelJS from "exceljs";
 import JSZip from "jszip";
 
-export const MAX_ITEM_ROWS = 10;
+export const MAX_ITEM_ROWS = 15;
+
+const ITEM_START_ROW = 7;
+const SUMMARY_ROW = ITEM_START_ROW + MAX_ITEM_ROWS;
+const NET_PAY_ROW = SUMMARY_ROW + 1;
+const NOTES_START_ROW = NET_PAY_ROW + 1;
+const SHEET_LAST_ROW = NOTES_START_ROW + 6;
 
 export type HireDateMap = Record<string, string>;
 
@@ -358,7 +364,7 @@ function fillTemplateWorksheet(
   const emptyDeductionAmountStyle = worksheet.getCell("E13").style;
 
   for (let offset = 0; offset < MAX_ITEM_ROWS; offset += 1) {
-    const rowNumber = 7 + offset;
+    const rowNumber = ITEM_START_ROW + offset;
     const allowance = employee.allowances[offset];
     const deduction = employee.deductions[offset];
 
@@ -379,25 +385,26 @@ function fillTemplateWorksheet(
     worksheet.getCell(`E${rowNumber}`).value = deduction?.amount ?? null;
   }
 
-  setRowValues(worksheet, 17, {
+  setRowValues(worksheet, SUMMARY_ROW, {
     B: "급여 합계",
     C: employee.allowanceTotal,
     D: "원천징수공제내역",
     E: employee.deductionTotal
   });
 
-  setRowValues(worksheet, 18, {
+  setRowValues(worksheet, NET_PAY_ROW, {
     D: `     실지급 급여 [ ${context.period.paymentDateText} ]`,
     E: employee.allowanceTotal - employee.deductionTotal
   });
 
-  worksheet.getCell("B19").value = `1. 입사일: ${formatHireDate(context.hireDate)}`;
-  worksheet.getCell("B20").value = "     : 비과세 항목에 8세이하 자녀 육아수당 반영";
-  worksheet.getCell("B21").value =
+  worksheet.getCell(`B${NOTES_START_ROW}`).value = `1. 입사일: ${formatHireDate(context.hireDate)}`;
+  worksheet.getCell(`B${NOTES_START_ROW + 1}`).value =
+    "     : 비과세 항목에 8세이하 자녀 육아수당 반영";
+  worksheet.getCell(`B${NOTES_START_ROW + 2}`).value =
     "2. 2017년 건강보험료 확정분(3.06%) 반영_2016년 보수총액 신고액 기준";
-  worksheet.getCell("B22").value = "3. 2016년 국민연금보험료 확정 적용";
-  worksheet.getCell("B23").value = null;
-  worksheet.getCell("B24").value = null;
+  worksheet.getCell(`B${NOTES_START_ROW + 3}`).value = "3. 2016년 국민연금보험료 확정 적용";
+  worksheet.getCell(`B${NOTES_START_ROW + 4}`).value = null;
+  worksheet.getCell(`B${NOTES_START_ROW + 5}`).value = null;
 }
 
 function buildManualWorkbook(
@@ -423,7 +430,7 @@ function buildManualWorkbook(
         fitToHeight: 0,
         scale: 86,
         horizontalCentered: true,
-        printArea: "A1:F25",
+        printArea: `A1:F${SHEET_LAST_ROW}`,
         margins: {
           left: 0.5905511811023623,
           right: 0.5905511811023623,
@@ -522,13 +529,7 @@ function buildEmployeeSheet(
     { width: 2.75 }
   ];
 
-  const rowHeights = [
-    45, 48, 20, 21.75, 12, 21.75, 20, 20, 20, 20, 20, 20, 20, 18.75, 18.75,
-    18.75, 20, 20, 20, 18.75, 20, 20, 20, 20, 20
-  ];
-  rowHeights.forEach((height, index) => {
-    worksheet.getRow(index + 1).height = height;
-  });
+  applyManualRowHeights(worksheet);
 
   mergeAndSet(worksheet, "B2:C2", context.period.titleMonth);
   mergeAndSet(worksheet, "D2:E2", "급여명세서");
@@ -548,7 +549,7 @@ function buildEmployeeSheet(
   mergeAndSet(worksheet, "D6:E6", "원천징수공제내역");
 
   for (let offset = 0; offset < MAX_ITEM_ROWS; offset += 1) {
-    const rowNumber = 7 + offset;
+    const rowNumber = ITEM_START_ROW + offset;
     const allowance = employee.allowances[offset];
     const deduction = employee.deductions[offset];
 
@@ -558,40 +559,74 @@ function buildEmployeeSheet(
     worksheet.getCell(`E${rowNumber}`).value = deduction?.amount ?? null;
   }
 
-  setRowValues(worksheet, 17, {
+  setRowValues(worksheet, SUMMARY_ROW, {
     B: "급여 합계",
     C: employee.allowanceTotal,
     D: "원천징수공제내역",
     E: employee.deductionTotal
   });
 
-  mergeAndSet(worksheet, "B18:C18", null);
-  setRowValues(worksheet, 18, {
+  mergeAndSet(worksheet, `B${NET_PAY_ROW}:C${NET_PAY_ROW}`, null);
+  setRowValues(worksheet, NET_PAY_ROW, {
     D: `     실지급 급여 [ ${context.period.paymentDateText} ]`,
     E: employee.allowanceTotal - employee.deductionTotal
   });
 
-  mergeAndSet(worksheet, "B19:E19", `1. 입사일: ${formatHireDate(context.hireDate)}`);
   mergeAndSet(
     worksheet,
-    "B20:E20",
+    `B${NOTES_START_ROW}:E${NOTES_START_ROW}`,
+    `1. 입사일: ${formatHireDate(context.hireDate)}`
+  );
+  mergeAndSet(
+    worksheet,
+    `B${NOTES_START_ROW + 1}:E${NOTES_START_ROW + 1}`,
     "     : 비과세 항목에 8세이하 자녀 육아수당 반영"
   );
   mergeAndSet(
     worksheet,
-    "B21:E21",
+    `B${NOTES_START_ROW + 2}:E${NOTES_START_ROW + 2}`,
     "2. 2017년 건강보험료 확정분(3.06%) 반영_2016년 보수총액 신고액 기준"
   );
-  mergeAndSet(worksheet, "B22:E22", "3. 2016년 국민연금보험료 확정 적용");
-  mergeAndSet(worksheet, "B23:E23", null);
-  mergeAndSet(worksheet, "B24:E24", null);
-  mergeAndSet(worksheet, "B25:C25", null);
+  mergeAndSet(
+    worksheet,
+    `B${NOTES_START_ROW + 3}:E${NOTES_START_ROW + 3}`,
+    "3. 2016년 국민연금보험료 확정 적용"
+  );
+  mergeAndSet(worksheet, `B${NOTES_START_ROW + 4}:E${NOTES_START_ROW + 4}`, null);
+  mergeAndSet(worksheet, `B${NOTES_START_ROW + 5}:E${NOTES_START_ROW + 5}`, null);
+  mergeAndSet(worksheet, `B${SHEET_LAST_ROW}:C${SHEET_LAST_ROW}`, null);
 
   applyStatementTemplateStyles(worksheet, employee);
 }
 
+function applyManualRowHeights(worksheet: ExcelJS.Worksheet) {
+  const rowHeights = new Map<number, number>([
+    [1, 45],
+    [2, 48],
+    [3, 20],
+    [4, 21.75],
+    [5, 12],
+    [6, 21.75],
+    [NET_PAY_ROW + 2, 18.75]
+  ]);
+
+  for (let row = ITEM_START_ROW; row < SUMMARY_ROW; row += 1) {
+    rowHeights.set(row, row <= 13 ? 20 : 18.75);
+  }
+
+  for (let row = SUMMARY_ROW; row <= SHEET_LAST_ROW; row += 1) {
+    if (!rowHeights.has(row)) {
+      rowHeights.set(row, 20);
+    }
+  }
+
+  rowHeights.forEach((height, row) => {
+    worksheet.getRow(row).height = height;
+  });
+}
+
 function applyStatementTemplateStyles(worksheet: ExcelJS.Worksheet, employee: PayrollEmployee) {
-  styleRange(worksheet, 1, 25, 1, 6, {
+  styleRange(worksheet, 1, SHEET_LAST_ROW, 1, 6, {
     font: { color: COLORS.brown, name: "Arial", size: 10 },
     alignment: { vertical: "middle" }
   });
@@ -622,13 +657,13 @@ function applyStatementTemplateStyles(worksheet: ExcelJS.Worksheet, employee: Pa
     alignment: { horizontal: "center", vertical: "middle" }
   });
 
-  for (let row = 7; row <= 18; row += 1) {
+  for (let row = ITEM_START_ROW; row <= NET_PAY_ROW; row += 1) {
     worksheet.getCell(`C${row}`).numFmt = ACCOUNTING_KRW_FORMAT;
     worksheet.getCell(`E${row}`).numFmt = ACCOUNTING_KRW_FORMAT;
   }
 
   for (let offset = 0; offset < MAX_ITEM_ROWS; offset += 1) {
-    const row = 7 + offset;
+    const row = ITEM_START_ROW + offset;
     if (!employee.deductions[offset]) {
       styleRange(worksheet, row, row, 4, 5, {
         fill: COLORS.gray
@@ -636,16 +671,16 @@ function applyStatementTemplateStyles(worksheet: ExcelJS.Worksheet, employee: Pa
     }
   }
 
-  styleRange(worksheet, 17, 17, 2, 5, {
+  styleRange(worksheet, SUMMARY_ROW, SUMMARY_ROW, 2, 5, {
     fill: COLORS.beige,
     font: { bold: true }
   });
-  styleRange(worksheet, 18, 18, 4, 5, {
+  styleRange(worksheet, NET_PAY_ROW, NET_PAY_ROW, 4, 5, {
     fill: COLORS.yellow,
     font: { bold: true }
   });
 
-  for (let row = 1; row <= 25; row += 1) {
+  for (let row = 1; row <= SHEET_LAST_ROW; row += 1) {
     for (let column = 1; column <= 6; column += 1) {
       worksheet.getCell(row, column).numFmt =
         column === 3 || column === 5 ? worksheet.getCell(row, column).numFmt : ACCOUNTING_TEXT_FORMAT;
@@ -658,17 +693,23 @@ function applyStatementTemplateStyles(worksheet: ExcelJS.Worksheet, employee: Pa
 }
 
 function applyTemplateBorders(worksheet: ExcelJS.Worksheet) {
-  for (let row = 2; row <= 25; row += 1) {
+  for (let row = 2; row <= SHEET_LAST_ROW; row += 1) {
     setCellBorder(worksheet.getCell(`A${row}`), { left: BORDER_SIDE });
     setCellBorder(worksheet.getCell(`F${row}`), { right: BORDER_SIDE });
   }
 
   for (let column = 1; column <= 6; column += 1) {
     setCellBorder(worksheet.getCell(2, column), { top: DOUBLE_BORDER_SIDE });
-    setCellBorder(worksheet.getCell(25, column), { bottom: BORDER_SIDE });
+    setCellBorder(worksheet.getCell(SHEET_LAST_ROW, column), { bottom: BORDER_SIDE });
   }
-  setCellBorder(worksheet.getCell("A25"), { left: BORDER_SIDE, bottom: BORDER_SIDE });
-  setCellBorder(worksheet.getCell("F25"), { right: BORDER_SIDE, bottom: BORDER_SIDE });
+  setCellBorder(worksheet.getCell(`A${SHEET_LAST_ROW}`), {
+    left: BORDER_SIDE,
+    bottom: BORDER_SIDE
+  });
+  setCellBorder(worksheet.getCell(`F${SHEET_LAST_ROW}`), {
+    right: BORDER_SIDE,
+    bottom: BORDER_SIDE
+  });
 
   setCellBorder(worksheet.getCell("B3"), { bottom: BORDER_SIDE });
   setCellBorder(worksheet.getCell("C3"), { bottom: BORDER_SIDE });
@@ -694,18 +735,18 @@ function applyTemplateBorders(worksheet: ExcelJS.Worksheet) {
 
   setSectionBorder(worksheet, 6);
 
-  for (let row = 7; row <= 17; row += 1) {
+  for (let row = ITEM_START_ROW; row <= SUMMARY_ROW; row += 1) {
     setTableRowBorder(worksheet, row);
   }
 
-  setCellBorder(worksheet.getCell("B18"), { top: BORDER_SIDE });
-  setCellBorder(worksheet.getCell("C18"), { top: BORDER_SIDE });
-  setCellBorder(worksheet.getCell("D18"), {
+  setCellBorder(worksheet.getCell(`B${NET_PAY_ROW}`), { top: BORDER_SIDE });
+  setCellBorder(worksheet.getCell(`C${NET_PAY_ROW}`), { top: BORDER_SIDE });
+  setCellBorder(worksheet.getCell(`D${NET_PAY_ROW}`), {
     left: BORDER_SIDE,
     top: BORDER_SIDE,
     bottom: BORDER_SIDE
   });
-  setCellBorder(worksheet.getCell("E18"), {
+  setCellBorder(worksheet.getCell(`E${NET_PAY_ROW}`), {
     right: BORDER_SIDE,
     top: BORDER_SIDE,
     bottom: BORDER_SIDE

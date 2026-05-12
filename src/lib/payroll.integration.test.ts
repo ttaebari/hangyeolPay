@@ -40,9 +40,10 @@ describe("generatePayrollStatements", () => {
     expect(worksheet?.getCell("E3").value).toBe("2026.03.01 ~ 2026.03.31");
     expect(worksheet?.getCell("C4").value).toBe("최 태 호");
     expect(worksheet?.getCell("E4").value).toBe(250421);
-    expect(worksheet?.getCell("C17").value).toBe(0);
-    expect(worksheet?.getCell("E18").value).toBe(0);
+    expect(worksheet?.getCell("C22").value).toBe(0);
+    expect(worksheet?.getCell("E23").value).toBe(0);
     expect(worksheet?.getColumn(2).width).toBe(35.75);
     expect(worksheet?.getRow(2).height).toBe(48);
+    expect(worksheet?.getRow(30).height).toBe(20);
   });
 });
