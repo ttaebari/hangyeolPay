@@ -45,5 +45,6 @@ describe("generatePayrollStatements", () => {
     expect(worksheet?.getColumn(2).width).toBe(35.75);
     expect(worksheet?.getRow(2).height).toBe(48);
     expect(worksheet?.getRow(30).height).toBe(20);
+    expect(JSON.stringify(worksheet?.getCell("B7").fill)).toContain("FFD9D9D9");
   });
 });

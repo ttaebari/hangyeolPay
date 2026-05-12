@@ -370,6 +370,10 @@ function fillTemplateWorksheet(
 
     setCellStyle(worksheet.getCell(`B${rowNumber}`), allowanceLabelStyle);
     setCellStyle(worksheet.getCell(`C${rowNumber}`), allowanceAmountStyle);
+    if (!allowance) {
+      setCellFill(worksheet.getCell(`B${rowNumber}`), COLORS.gray);
+      setCellFill(worksheet.getCell(`C${rowNumber}`), COLORS.gray);
+    }
     worksheet.getCell(`B${rowNumber}`).value = allowance?.label ?? null;
     worksheet.getCell(`C${rowNumber}`).value = allowance?.amount ?? null;
 
@@ -664,6 +668,11 @@ function applyStatementTemplateStyles(worksheet: ExcelJS.Worksheet, employee: Pa
 
   for (let offset = 0; offset < MAX_ITEM_ROWS; offset += 1) {
     const row = ITEM_START_ROW + offset;
+    if (!employee.allowances[offset]) {
+      styleRange(worksheet, row, row, 2, 3, {
+        fill: COLORS.gray
+      });
+    }
     if (!employee.deductions[offset]) {
       styleRange(worksheet, row, row, 4, 5, {
         fill: COLORS.gray
@@ -807,6 +816,14 @@ function setCellBorder(cell: ExcelJS.Cell, border: Partial<ExcelJS.Borders>) {
 
 function setCellStyle(cell: ExcelJS.Cell, style: Partial<ExcelJS.Style>) {
   cell.style = JSON.parse(JSON.stringify(style));
+}
+
+function setCellFill(cell: ExcelJS.Cell, color: string) {
+  cell.fill = {
+    type: "pattern",
+    pattern: "solid",
+    fgColor: { argb: color }
+  };
 }
 
 function buildHeaderIndex(worksheet: ExcelJS.Worksheet, rowNumbers: number[]) {
