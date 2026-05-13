@@ -1,11 +1,14 @@
 import ExcelJS from "exceljs";
+import JSZip from "jszip";
 import { readFile } from "node:fs/promises";
+import { PDFDocument } from "pdf-lib";
 import { describe, expect, it } from "vitest";
 import hireDatesJson from "../data/hireDates.json";
 import mappingsJson from "../data/payItemMappings.json";
 import {
   HireDateMap,
   PayItemMappings,
+  generatePayrollPdfArchive,
   generatePayrollStatements
 } from "./payroll";
 
@@ -47,4 +50,39 @@ describe("generatePayrollStatements", () => {
     expect(worksheet?.getRow(30).height).toBe(20);
     expect(JSON.stringify(worksheet?.getCell("B7").fill)).toContain("FFD9D9D9");
   });
+
+  it("generates a zip archive with one PDF per employee", async () => {
+    const source = await readFile("주식회사브로넥스-202604 (4).xlsx");
+    const font = await readFile("public/fonts/NanumGothic.ttc");
+    const sourceBuffer = toArrayBuffer(source);
+    const fontBuffer = toArrayBuffer(font);
+    const result = await generatePayrollPdfArchive({
+      sourceBuffer,
+      fontBuffer,
+      companyName: "주식회사브로넥스",
+      paymentDate: "2026-04-10",
+      hireDates: hireDatesJson as HireDateMap,
+      mappings: mappingsJson as PayItemMappings
+    });
+
+    const zip = await JSZip.loadAsync(result.buffer);
+    const pdfFileName = "2026년 03월_급여명세서_주식회사브로넥스(최태호).pdf";
+    const pdfFile = zip.file(pdfFileName);
+
+    expect(result.fileName).toBe("2026년_03월_급여명세서_주식회사브로넥스_PDF.zip");
+    expect(result.employeeCount).toBe(1);
+    expect(pdfFile).toBeDefined();
+
+    const pdfBuffer = await pdfFile?.async("arraybuffer");
+    expect(pdfBuffer?.byteLength).toBeGreaterThan(1000);
+
+    const pdf = await PDFDocument.load(pdfBuffer as ArrayBuffer);
+    expect(pdf.getPageCount()).toBe(1);
+  });
 });
+
+function toArrayBuffer(buffer: Buffer): ArrayBuffer {
+  const arrayBuffer = new ArrayBuffer(buffer.byteLength);
+  new Uint8Array(arrayBuffer).set(buffer);
+  return arrayBuffer;
+}

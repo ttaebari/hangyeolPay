@@ -1,5 +1,7 @@
 import ExcelJS from "exceljs";
 import JSZip from "jszip";
+import { PDFDocument, PDFFont, PDFPage, rgb } from "pdf-lib";
+import fontkit from "@pdf-lib/fontkit";
 
 export const MAX_ITEM_ROWS = 15;
 
@@ -45,6 +47,7 @@ export type PayrollPeriod = {
 export type GeneratePayrollInput = {
   sourceBuffer: ArrayBuffer;
   templateBuffer?: ArrayBuffer;
+  fontBuffer?: ArrayBuffer;
   companyName: string;
   paymentDate: string;
   hireDates: HireDateMap;
@@ -56,6 +59,14 @@ export type GeneratePayrollResult = {
   fileName: string;
   employeeCount: number;
   period: PayrollPeriod;
+};
+
+export type GeneratePayrollPdfArchiveResult = GeneratePayrollResult;
+
+type PreparedPayrollStatements = {
+  company: string;
+  period: PayrollPeriod;
+  employees: PayrollEmployee[];
 };
 
 type SourceValue = {
@@ -219,6 +230,81 @@ export async function generatePayrollStatements({
   hireDates,
   mappings
 }: GeneratePayrollInput): Promise<GeneratePayrollResult> {
+  const { company, period, employees } = await preparePayrollStatements({
+    sourceBuffer,
+    companyName,
+    paymentDate,
+    hireDates,
+    mappings
+  });
+
+  const workbook = templateBuffer
+    ? await buildTemplateWorkbook(templateBuffer, employees, hireDates, company, period)
+    : buildManualWorkbook(employees, hireDates, company, period);
+
+  const output = await patchWorkbookDefaultFont(toArrayBuffer(await workbook.xlsx.writeBuffer()));
+
+  return {
+    buffer: output,
+    fileName: `${period.fileMonth}_급여명세서_${sanitizeFileName(company)}.xlsx`,
+    employeeCount: employees.length,
+    period
+  };
+}
+
+export async function generatePayrollPdfArchive({
+  sourceBuffer,
+  fontBuffer,
+  companyName,
+  paymentDate,
+  hireDates,
+  mappings
+}: GeneratePayrollInput): Promise<GeneratePayrollPdfArchiveResult> {
+  const { company, period, employees } = await preparePayrollStatements({
+    sourceBuffer,
+    companyName,
+    paymentDate,
+    hireDates,
+    mappings
+  });
+  const resolvedFontBuffer = fontBuffer ?? (await loadDefaultPdfFontBuffer());
+  const zip = new JSZip();
+
+  await Promise.all(
+    employees.map(async (employee) => {
+      const pdf = await buildEmployeePdf(employee, {
+        company,
+        hireDate: hireDates[employee.name],
+        period,
+        fontBuffer: resolvedFontBuffer
+      });
+
+      zip.file(
+        `${period.titleMonth}_급여명세서_${sanitizeFileName(company)}(${sanitizeFileName(
+          employee.name
+        )}).pdf`,
+        pdf
+      );
+    })
+  );
+
+  const output = await zip.generateAsync({ type: "arraybuffer" });
+
+  return {
+    buffer: output,
+    fileName: `${period.fileMonth}_급여명세서_${sanitizeFileName(company)}_PDF.zip`,
+    employeeCount: employees.length,
+    period
+  };
+}
+
+async function preparePayrollStatements({
+  sourceBuffer,
+  companyName,
+  paymentDate,
+  hireDates,
+  mappings
+}: GeneratePayrollInput): Promise<PreparedPayrollStatements> {
   const company = companyName.trim();
   if (!company) {
     throw new Error("회사명을 입력해야 합니다.");
@@ -245,18 +331,565 @@ export async function generatePayrollStatements({
     );
   }
 
-  const workbook = templateBuffer
-    ? await buildTemplateWorkbook(templateBuffer, employees, hireDates, company, period)
-    : buildManualWorkbook(employees, hireDates, company, period);
+  return {
+    company,
+    period,
+    employees
+  };
+}
 
-  const output = await patchWorkbookDefaultFont(toArrayBuffer(await workbook.xlsx.writeBuffer()));
+const PDF_FONT_PATH = "/fonts/NanumGothic.ttc";
+const PDF_FONT_REGULAR = "NanumGothic";
+const PDF_FONT_BOLD = "NanumGothicBold";
+const PDF_PAGE_WIDTH = 595.28;
+const PDF_PAGE_HEIGHT = 841.89;
+const PDF_TABLE_WIDTH = 560;
+const PDF_TABLE_LEFT = (PDF_PAGE_WIDTH - PDF_TABLE_WIDTH) / 2;
+const PDF_START_Y = 800;
+const PDF_COLUMN_WIDTH_UNITS = [2.75, 35.75, 27.75, 35.75, 27.75, 2.75];
+const PDF_COLUMN_WIDTHS = scalePdfColumnWidths(PDF_COLUMN_WIDTH_UNITS, PDF_TABLE_WIDTH);
+
+type PdfStatementContext = {
+  company: string;
+  hireDate: string;
+  period: PayrollPeriod;
+  fontBuffer: ArrayBuffer;
+};
+
+type PdfFonts = {
+  regular: PDFFont;
+  bold: PDFFont;
+};
+
+type PdfRect = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+type PdfCellOptions = {
+  fill?: ReturnType<typeof rgb>;
+  border?: boolean;
+};
+
+type PdfTextOptions = {
+  align?: "left" | "center" | "right";
+  color?: ReturnType<typeof rgb>;
+  font?: PDFFont;
+  minSize?: number;
+  padding?: number;
+  size?: number;
+};
+
+async function buildEmployeePdf(
+  employee: PayrollEmployee,
+  context: PdfStatementContext
+): Promise<Uint8Array> {
+  const pdfDoc = await PDFDocument.create();
+  const regular = await embedKoreanFont(pdfDoc, context.fontBuffer, PDF_FONT_REGULAR);
+  const bold = await embedKoreanFont(pdfDoc, context.fontBuffer, PDF_FONT_BOLD);
+  const fonts = { regular, bold };
+  const page = pdfDoc.addPage([PDF_PAGE_WIDTH, PDF_PAGE_HEIGHT]);
+  const rows = buildPdfRowRects();
+  const columns = buildPdfColumnRects();
+  const color = colorFromArgb(COLORS.brown);
+  const borderColor = colorFromArgb(COLORS.border);
+
+  page.drawRectangle({
+    x: 0,
+    y: 0,
+    width: PDF_PAGE_WIDTH,
+    height: PDF_PAGE_HEIGHT,
+    color: rgb(1, 1, 1)
+  });
+  drawOuterPdfFrame(page, rows, columns, borderColor);
+
+  drawPdfText(page, `${context.period.titleMonth}`, mergePdfCells(rows, columns, 2, 2, 3), fonts, {
+    align: "right",
+    color,
+    font: fonts.regular,
+    size: 20,
+    padding: 8
+  });
+  drawPdfText(page, "급여명세서", mergePdfCells(rows, columns, 2, 4, 5), fonts, {
+    align: "left",
+    color,
+    font: fonts.regular,
+    size: 20,
+    padding: 8
+  });
+
+  drawPdfText(page, context.company, pdfCell(rows, columns, 3, 2), fonts, {
+    align: "left",
+    color,
+    size: 9.5
+  });
+  drawPdfText(page, "급여근속기간 : ", pdfCell(rows, columns, 3, 4), fonts, {
+    align: "right",
+    color,
+    size: 9.5
+  });
+  drawPdfText(page, context.period.periodText, pdfCell(rows, columns, 3, 5), fonts, {
+    align: "center",
+    color,
+    minSize: 7.2,
+    size: 9.2
+  });
+  drawPdfLine(
+    page,
+    pdfCell(rows, columns, 3, 2).x,
+    pdfCell(rows, columns, 3, 2).y,
+    pdfCell(rows, columns, 3, 3).x + pdfCell(rows, columns, 3, 3).width,
+    pdfCell(rows, columns, 3, 2).y,
+    borderColor
+  );
+
+  drawLabeledPdfRow(
+    page,
+    rows,
+    columns,
+    fonts,
+    4,
+    ["직원 이름", formatEmployeeName(employee.name), "직원 번호", employeeNumberFromHireDate(context.hireDate)],
+    color,
+    colorFromArgb(COLORS.beige)
+  );
+
+  drawPdfMergedCell(page, rows, columns, 6, 2, 3, colorFromArgb(COLORS.yellow), borderColor);
+  drawPdfMergedCell(page, rows, columns, 6, 4, 5, colorFromArgb(COLORS.yellow), borderColor);
+  drawPdfText(page, "급여내역", mergePdfCells(rows, columns, 6, 2, 3), fonts, {
+    align: "center",
+    color,
+    font: fonts.bold,
+    size: 9.5
+  });
+  drawPdfText(page, "원천징수공제내역", mergePdfCells(rows, columns, 6, 4, 5), fonts, {
+    align: "center",
+    color,
+    font: fonts.bold,
+    size: 9.5
+  });
+
+  for (let offset = 0; offset < MAX_ITEM_ROWS; offset += 1) {
+    const row = ITEM_START_ROW + offset;
+    const allowance = employee.allowances[offset];
+    const deduction = employee.deductions[offset];
+
+    drawPdfItemPair(page, rows, columns, fonts, row, 2, allowance, color, borderColor);
+    drawPdfItemPair(page, rows, columns, fonts, row, 4, deduction, color, borderColor);
+  }
+
+  drawLabeledPdfRow(
+    page,
+    rows,
+    columns,
+    fonts,
+    SUMMARY_ROW,
+    ["급여 합계", formatPdfCurrency(employee.allowanceTotal), "원천징수공제내역", formatPdfCurrency(employee.deductionTotal)],
+    color,
+    colorFromArgb(COLORS.beige),
+    true
+  );
+
+  drawPdfCell(page, mergePdfCells(rows, columns, NET_PAY_ROW, 2, 3), { border: false });
+  drawPdfCell(page, pdfCell(rows, columns, NET_PAY_ROW, 4), {
+    border: true,
+    fill: colorFromArgb(COLORS.yellow)
+  });
+  drawPdfCell(page, pdfCell(rows, columns, NET_PAY_ROW, 5), {
+    border: true,
+    fill: colorFromArgb(COLORS.yellow)
+  });
+  drawPdfText(
+    page,
+    `실지급 급여 [ ${context.period.paymentDateText} ]`,
+    pdfCell(rows, columns, NET_PAY_ROW, 4),
+    fonts,
+    {
+      align: "center",
+      color,
+      font: fonts.bold,
+      minSize: 7.5,
+      size: 9.5
+    }
+  );
+  drawPdfText(
+    page,
+    formatPdfCurrency(employee.allowanceTotal - employee.deductionTotal),
+    pdfCell(rows, columns, NET_PAY_ROW, 5),
+    fonts,
+    {
+      align: "right",
+      color,
+      font: fonts.bold,
+      size: 9.5
+    }
+  );
+
+  drawPdfNotes(page, rows, columns, fonts, context.hireDate, color);
+
+  return pdfDoc.save();
+}
+
+function drawLabeledPdfRow(
+  page: PDFPage,
+  rows: Map<number, PdfRect>,
+  columns: Map<number, PdfRect>,
+  fonts: PdfFonts,
+  row: number,
+  values: [string, string, string, string],
+  color: ReturnType<typeof rgb>,
+  fill: ReturnType<typeof rgb>,
+  bold = false
+) {
+  [2, 3, 4, 5].forEach((column) => {
+    drawPdfCell(page, pdfCell(rows, columns, row, column), { border: true, fill });
+  });
+
+  const valueFont = bold ? fonts.bold : fonts.regular;
+  drawPdfText(page, values[0], pdfCell(rows, columns, row, 2), fonts, {
+    align: "center",
+    color,
+    font: valueFont,
+    size: 9.3
+  });
+  drawPdfText(page, values[1], pdfCell(rows, columns, row, 3), fonts, {
+    align: row === SUMMARY_ROW ? "right" : "center",
+    color,
+    font: valueFont,
+    size: 9.3
+  });
+  drawPdfText(page, values[2], pdfCell(rows, columns, row, 4), fonts, {
+    align: "center",
+    color,
+    font: valueFont,
+    minSize: 7.5,
+    size: 9.3
+  });
+  drawPdfText(page, values[3], pdfCell(rows, columns, row, 5), fonts, {
+    align: "right",
+    color,
+    font: valueFont,
+    size: 9.3
+  });
+}
+
+function drawPdfItemPair(
+  page: PDFPage,
+  rows: Map<number, PdfRect>,
+  columns: Map<number, PdfRect>,
+  fonts: PdfFonts,
+  row: number,
+  startColumn: number,
+  item: PayItem | undefined,
+  color: ReturnType<typeof rgb>,
+  borderColor: ReturnType<typeof rgb>
+) {
+  const labelCell = pdfCell(rows, columns, row, startColumn);
+  const amountCell = pdfCell(rows, columns, row, startColumn + 1);
+  const fill = item ? undefined : colorFromArgb(COLORS.gray);
+
+  drawPdfCell(page, labelCell, { border: true, fill });
+  drawPdfCell(page, amountCell, { border: true, fill });
+
+  if (!item) {
+    return;
+  }
+
+  drawPdfText(page, item.label, labelCell, fonts, {
+    align: "left",
+    color,
+    size: 9.2
+  });
+  drawPdfText(page, formatPdfCurrency(item.amount), amountCell, fonts, {
+    align: "right",
+    color,
+    size: 9.2
+  });
+
+  drawPdfLine(page, amountCell.x, amountCell.y, amountCell.x, amountCell.y + amountCell.height, borderColor);
+}
+
+function drawPdfNotes(
+  page: PDFPage,
+  rows: Map<number, PdfRect>,
+  columns: Map<number, PdfRect>,
+  fonts: PdfFonts,
+  hireDate: string,
+  color: ReturnType<typeof rgb>
+) {
+  const notes = [
+    `1. 입사일: ${formatHireDate(hireDate)}`,
+    "     : 비과세 항목에 8세이하 자녀 육아수당 반영",
+    "2. 2017년 건강보험료 확정분(3.06%) 반영_2016년 보수총액 신고액 기준",
+    "3. 2016년 국민연금보험료 확정 적용"
+  ];
+
+  notes.forEach((note, index) => {
+    drawPdfText(page, note, mergePdfCells(rows, columns, NOTES_START_ROW + index, 2, 5), fonts, {
+      align: "left",
+      color,
+      minSize: 7.2,
+      size: 8.8
+    });
+  });
+}
+
+function drawOuterPdfFrame(
+  page: PDFPage,
+  rows: Map<number, PdfRect>,
+  columns: Map<number, PdfRect>,
+  borderColor: ReturnType<typeof rgb>
+) {
+  const left = pdfCell(rows, columns, 2, 1).x;
+  const right = pdfCell(rows, columns, 2, 6).x + pdfCell(rows, columns, 2, 6).width;
+  const top = pdfCell(rows, columns, 2, 1).y + pdfCell(rows, columns, 2, 1).height;
+  const bottom = pdfCell(rows, columns, SHEET_LAST_ROW, 1).y;
+
+  drawPdfLine(page, left, top, right, top, borderColor, 1.2);
+  drawPdfLine(page, left, top - 3, right, top - 3, borderColor, 0.8);
+  drawPdfLine(page, left, bottom, right, bottom, borderColor);
+  drawPdfLine(page, left, bottom, left, top, borderColor);
+  drawPdfLine(page, right, bottom, right, top, borderColor);
+}
+
+function drawPdfMergedCell(
+  page: PDFPage,
+  rows: Map<number, PdfRect>,
+  columns: Map<number, PdfRect>,
+  row: number,
+  startColumn: number,
+  endColumn: number,
+  fill: ReturnType<typeof rgb>,
+  borderColor: ReturnType<typeof rgb>
+) {
+  const rect = mergePdfCells(rows, columns, row, startColumn, endColumn);
+  page.drawRectangle({
+    ...rect,
+    color: fill,
+    borderColor,
+    borderWidth: 0.8
+  });
+}
+
+function drawPdfCell(page: PDFPage, rect: PdfRect, options: PdfCellOptions = {}) {
+  page.drawRectangle({
+    ...rect,
+    color: options.fill,
+    borderColor: options.border ? colorFromArgb(COLORS.border) : undefined,
+    borderWidth: options.border ? 0.8 : undefined
+  });
+}
+
+function drawPdfText(
+  page: PDFPage,
+  text: string,
+  rect: PdfRect,
+  fonts: PdfFonts,
+  options: PdfTextOptions = {}
+) {
+  const font = options.font ?? fonts.regular;
+  const padding = options.padding ?? 6;
+  const size = fitPdfFontSize(
+    font,
+    text,
+    rect.width - padding * 2,
+    options.size ?? 9.5,
+    options.minSize ?? 7
+  );
+  const textWidth = font.widthOfTextAtSize(text, size);
+  const align = options.align ?? "left";
+  const x =
+    align === "right"
+      ? rect.x + rect.width - padding - textWidth
+      : align === "center"
+        ? rect.x + (rect.width - textWidth) / 2
+        : rect.x + padding;
+  const y = rect.y + (rect.height - size) / 2 + 1.4;
+
+  page.drawText(text, {
+    x,
+    y,
+    size,
+    font,
+    color: options.color ?? colorFromArgb(COLORS.brown)
+  });
+}
+
+function drawPdfLine(
+  page: PDFPage,
+  startX: number,
+  startY: number,
+  endX: number,
+  endY: number,
+  color: ReturnType<typeof rgb>,
+  thickness = 0.8
+) {
+  page.drawLine({
+    start: { x: startX, y: startY },
+    end: { x: endX, y: endY },
+    color,
+    thickness
+  });
+}
+
+function buildPdfRowRects() {
+  const rowRects = new Map<number, PdfRect>();
+  const heights = buildPdfRowHeights();
+  let top = PDF_START_Y;
+
+  for (let row = 1; row <= SHEET_LAST_ROW; row += 1) {
+    const height = heights.get(row) ?? 20;
+    rowRects.set(row, {
+      x: PDF_TABLE_LEFT,
+      y: top - height,
+      width: PDF_TABLE_WIDTH,
+      height
+    });
+    top -= height;
+  }
+
+  return rowRects;
+}
+
+function buildPdfColumnRects() {
+  const columnRects = new Map<number, PdfRect>();
+  let left = PDF_TABLE_LEFT;
+
+  PDF_COLUMN_WIDTHS.forEach((width, index) => {
+    columnRects.set(index + 1, {
+      x: left,
+      y: 0,
+      width,
+      height: PDF_PAGE_HEIGHT
+    });
+    left += width;
+  });
+
+  return columnRects;
+}
+
+function buildPdfRowHeights() {
+  const rowHeights = new Map<number, number>([
+    [1, 45],
+    [2, 48],
+    [3, 20],
+    [4, 21.75],
+    [5, 12],
+    [6, 21.75],
+    [NET_PAY_ROW + 2, 18.75]
+  ]);
+
+  for (let row = ITEM_START_ROW; row < SUMMARY_ROW; row += 1) {
+    rowHeights.set(row, row <= 13 ? 20 : 18.75);
+  }
+
+  for (let row = SUMMARY_ROW; row <= SHEET_LAST_ROW; row += 1) {
+    if (!rowHeights.has(row)) {
+      rowHeights.set(row, 20);
+    }
+  }
+
+  return rowHeights;
+}
+
+function pdfCell(
+  rows: Map<number, PdfRect>,
+  columns: Map<number, PdfRect>,
+  row: number,
+  column: number
+): PdfRect {
+  const rowRect = rows.get(row);
+  const columnRect = columns.get(column);
+
+  if (!rowRect || !columnRect) {
+    throw new Error("PDF 양식 좌표를 계산하지 못했습니다.");
+  }
 
   return {
-    buffer: output,
-    fileName: `${period.fileMonth}_급여명세서_${sanitizeFileName(company)}.xlsx`,
-    employeeCount: employees.length,
-    period
+    x: columnRect.x,
+    y: rowRect.y,
+    width: columnRect.width,
+    height: rowRect.height
   };
+}
+
+function mergePdfCells(
+  rows: Map<number, PdfRect>,
+  columns: Map<number, PdfRect>,
+  row: number,
+  startColumn: number,
+  endColumn: number
+): PdfRect {
+  const start = pdfCell(rows, columns, row, startColumn);
+  const end = pdfCell(rows, columns, row, endColumn);
+
+  return {
+    x: start.x,
+    y: start.y,
+    width: end.x + end.width - start.x,
+    height: start.height
+  };
+}
+
+function fitPdfFontSize(
+  font: PDFFont,
+  text: string,
+  maxWidth: number,
+  preferredSize: number,
+  minSize: number
+) {
+  let size = preferredSize;
+
+  while (size > minSize && font.widthOfTextAtSize(text, size) > maxWidth) {
+    size -= 0.2;
+  }
+
+  return Math.max(size, minSize);
+}
+
+async function embedKoreanFont(
+  pdfDoc: PDFDocument,
+  fontBuffer: ArrayBuffer,
+  postscriptName: string
+) {
+  pdfDoc.registerFontkit({
+    ...fontkit,
+    create: (data: Uint8Array, requestedPostscriptName?: string) =>
+      fontkit.create(data, requestedPostscriptName ?? postscriptName)
+  });
+
+  return pdfDoc.embedFont(fontBuffer, { subset: true });
+}
+
+async function loadDefaultPdfFontBuffer() {
+  const response = await fetch(PDF_FONT_PATH);
+
+  if (!response.ok) {
+    throw new Error("PDF 한글 폰트 파일을 불러오지 못했습니다.");
+  }
+
+  return response.arrayBuffer();
+}
+
+function formatPdfCurrency(amount: number) {
+  const rounded = Math.round(amount);
+  const absolute = Math.abs(rounded).toLocaleString("ko-KR");
+  return rounded < 0 ? `-₩ ${absolute}` : `₩ ${absolute}`;
+}
+
+function colorFromArgb(argb: string) {
+  const hex = argb.slice(2);
+  const red = Number.parseInt(hex.slice(0, 2), 16) / 255;
+  const green = Number.parseInt(hex.slice(2, 4), 16) / 255;
+  const blue = Number.parseInt(hex.slice(4, 6), 16) / 255;
+  return rgb(red, green, blue);
+}
+
+function scalePdfColumnWidths(widths: number[], totalWidth: number) {
+  const totalUnits = widths.reduce((sum, width) => sum + width, 0);
+  return widths.map((width) => (width / totalUnits) * totalWidth);
 }
 
 async function buildTemplateWorkbook(

@@ -19,6 +19,7 @@ import {
   HireDateMap,
   PayItemMappings,
   formatHireDate,
+  generatePayrollPdfArchive,
   generatePayrollStatements,
   getPreviousPayrollPeriod
 } from "./lib/payroll";
@@ -26,12 +27,13 @@ import {
 const hireDates = hireDatesJson as HireDateMap;
 const payItemMappings = payItemMappingsJson as PayItemMappings;
 const companyNames = companyNamesJson as string[];
+type DownloadType = "excel" | "pdf";
 
 function App() {
   const [companyName, setCompanyName] = useState(companyNames[0] ?? "");
   const [paymentDate, setPaymentDate] = useState("");
   const [file, setFile] = useState<File | null>(null);
-  const [isProcessing, setIsProcessing] = useState(false);
+  const [processingType, setProcessingType] = useState<DownloadType | null>(null);
   const [isMappingsOpen, setIsMappingsOpen] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<GeneratePayrollResult | null>(null);
@@ -53,7 +55,7 @@ function App() {
     []
   );
 
-  const canSubmit = Boolean(file && companyName.trim() && paymentDate && !isProcessing);
+  const canDownload = Boolean(file && companyName.trim() && paymentDate && !processingType);
 
   const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     setError("");
@@ -61,38 +63,53 @@ function App() {
     setFile(event.target.files?.[0] ?? null);
   };
 
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+  const handleExcelSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    await handleDownload("excel");
+  };
 
+  const handleDownload = async (type: DownloadType) => {
     if (!file) {
       setError("급여대장 XLSX 파일을 선택해 주세요.");
       return;
     }
 
-    setIsProcessing(true);
+    setProcessingType(type);
     setError("");
     setResult(null);
 
     try {
-      const [sourceBuffer, templateBuffer] = await Promise.all([
-        file.arrayBuffer(),
-        loadTemplateBuffer()
-      ]);
-      const generated = await generatePayrollStatements({
-        sourceBuffer,
-        templateBuffer,
-        companyName,
-        paymentDate,
-        hireDates,
-        mappings: payItemMappings
-      });
+      const sourceBuffer = await file.arrayBuffer();
+      const generated =
+        type === "excel"
+          ? await generatePayrollStatements({
+              sourceBuffer,
+              templateBuffer: await loadTemplateBuffer(),
+              companyName,
+              paymentDate,
+              hireDates,
+              mappings: payItemMappings
+            })
+          : await generatePayrollPdfArchive({
+              sourceBuffer,
+              companyName,
+              paymentDate,
+              hireDates,
+              mappings: payItemMappings
+            });
 
-      downloadWorkbook(generated.buffer, generated.fileName);
+      downloadBinary(
+        generated.buffer,
+        generated.fileName,
+        type === "excel"
+          ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+          : "application/zip"
+      );
       setResult(generated);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "급여명세서 생성 중 오류가 발생했습니다.");
     } finally {
-      setIsProcessing(false);
+      setProcessingType(null);
     }
   };
 
@@ -121,7 +138,7 @@ function App() {
         </header>
 
         <div className="content-grid">
-          <form className="panel primary-panel" onSubmit={handleSubmit}>
+          <form className="panel primary-panel" onSubmit={handleExcelSubmit}>
             <div className="panel-heading">
               <FileSpreadsheet size={20} aria-hidden="true" />
               <h2>급여대장 업로드</h2>
@@ -163,10 +180,21 @@ function App() {
               <input type="file" accept=".xlsx" onChange={handleFileChange} />
             </label>
 
-            <button className="generate-button" type="submit" disabled={!canSubmit}>
-              <FileDown size={18} aria-hidden="true" />
-              {isProcessing ? "생성 중" : "급여명세서 다운로드"}
-            </button>
+            <div className="download-actions">
+              <button className="generate-button" type="submit" disabled={!canDownload}>
+                <FileDown size={18} aria-hidden="true" />
+                {processingType === "excel" ? "엑셀 생성 중" : "급여명세서 엑셀 다운로드"}
+              </button>
+              <button
+                className="generate-button pdf-button"
+                type="button"
+                disabled={!canDownload}
+                onClick={() => handleDownload("pdf")}
+              >
+                <FileDown size={18} aria-hidden="true" />
+                {processingType === "pdf" ? "PDF 생성 중" : "급여명세서 PDF 다운로드"}
+              </button>
+            </div>
 
             {error && (
               <div className="notice error" role="alert">
@@ -283,10 +311,8 @@ function App() {
   );
 }
 
-function downloadWorkbook(buffer: ArrayBuffer, fileName: string) {
-  const blob = new Blob([buffer], {
-    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-  });
+function downloadBinary(buffer: ArrayBuffer, fileName: string, mimeType: string) {
+  const blob = new Blob([buffer], { type: mimeType });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
