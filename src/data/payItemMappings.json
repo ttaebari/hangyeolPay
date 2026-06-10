@@ -7,7 +7,8 @@
     { "source": "성과급", "label": "성과급" },
     { "source": "휴일근로수당", "label": "휴일근로수당" },
     { "source": "연차수당", "label": "연차수당" },
-    { "source": "귀성여비", "label": "귀성여비" }
+    { "source": "귀성여비", "label": "귀성여비" },
+    { "source": "노트북지원금", "label": "노트북지원금"}
   ],
   "deductions": [
     { "source": "국민연금", "label": "국민연금" },
